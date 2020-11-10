@@ -1,0 +1,9 @@
+project:
+  name: go-lambda-template
+  regions:
+    - us-east-1
+tests:
+  go-lambda-template:
+    template: ./packaged-template.yaml
+    parameters:
+      Env: Dev

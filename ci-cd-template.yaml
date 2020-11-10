@@ -1,0 +1,425 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Template to create the pipeline to deploy test lambda"
+Parameters:
+  Env:
+    Description: 'The env level to which this stack is being deployed (i.e. Dev/QA/Prod)'
+    Type: 'String'
+    Default: Dev
+    AllowedValues: 
+      - Dev
+      - QA
+      - Prod
+  CFNStackName:
+    Description: Go lambda deployment pipeline stack
+    Type: String
+    Default: go-lambda-template
+  ArtifactName:
+    Description: Name of artifact to be consumed
+    Type: String
+    Default: packaged-template.yaml
+  GitHubOwner:
+    Type: String
+    Default: maxexllc
+    AllowedPattern: "[A-Za-z0-9-]+"
+  GitHubRepo:
+    Type: String
+    Default: template-go
+    AllowedPattern: "[A-Za-z0-9-]+"
+  GitHubBranch:
+    Type: String
+    Default: main
+    AllowedPattern: "[A-Za-z0-9-]+"
+Resources:
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Sid: ''
+            Principal:
+              Service: 'codebuild.amazonaws.com'
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildServiceRolePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*:*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/maxex/aws/lambda/tCaT-*
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group::log-stream:*
+              - Effect: Allow
+                Action:
+                  - apigateway:POST
+                Resource:
+                  - "arn:aws:apigateway:us-east-1::/restapis"
+              - Effect: Allow
+                Action:
+                  - apigateway:PATCH
+                  - apigateway:POST
+                  - apigateway:GET
+                  - apigateway:DELETE
+                Resource:
+                  - "arn:aws:apigateway:us-east-1::/restapis/*"
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource:
+                  - !Sub ${ArtifactBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - s3:*
+                Resource:
+                  - "arn:aws:s3:::tcat-*"
+              - Effect: Allow
+                Action:
+                  - cloudformation:*
+                Resource:
+                  - !Sub "arn:aws:cloudformation:*:${AWS::AccountId}:stack/tCaT-*/*"
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeStacks
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                Resource:
+                  - arn:aws:cloudformation:us-east-1:aws:transform/Serverless-2016-10-31
+              - Effect: Allow
+                Action: cloudformation:DescribeStacks
+                Resource:
+                  - "*"
+              - Effect: Allow
+                Action: "lambda:*"
+                Resource: "arn:aws:lambda:*:*:function:tCaT*"
+              - Effect: Allow
+                Action: "iam:*"
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/tCaT-*"
+              - Effect: Allow
+                Action:
+                  - codedeploy:CreateApplication
+                  - codedeploy:DeleteApplication
+                Resource: !Sub "arn:aws:codedeploy:*:${AWS::AccountId}:application:tCaT-*"
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                Resource: !Sub "arn:aws:cloudwatch:*:${AWS::AccountId}:alarm:tCaT-*"
+              - Effect: Allow
+                Action:
+                  - codedeploy:CreateDeploymentGroup
+                  - codedeploy:DeleteDeploymentGroup
+                Resource: !Sub "arn:aws:codedeploy:*:${AWS::AccountId}:deploymentgroup:tCaT-*"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: "arn:aws:secretsmanager:us-east-1:515177040146:secret:githubsvcaccesstkn-ioewJC"
+              - Effect: Allow
+                Action: 
+                  - kms:Decrypt
+                  - kms:DescribeKey
+                Resource: "arn:aws:kms:us-east-1:515177040146:key/24fa1a06-0c1d-440a-acfb-9ffcfefc2098"
+  CodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - cloudformation.amazonaws.com
+                - codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodePipelineServiceRolePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codepipeline:DeregisterWebhookWithThirdParty
+                  - codepipeline:DeletePipeline
+                  - codepipeline:UpdatePipeline
+                Resource: !Sub "arn:aws:codepipeline:*:*:${CFNStackName}-pipeline"
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeStacks
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                Resource:
+                  - !Sub "arn:aws:cloudformation:us-east-1:*:stack/${CFNStackName}*"
+                  - arn:aws:cloudformation:us-east-1:aws:transform/Serverless-2016-10-31
+              - Effect: Allow
+                Action:
+                  - apigateway:POST
+                Resource:
+                  - "arn:aws:apigateway:us-east-1::/restapis"
+              - Effect: Allow
+                Action:
+                  - apigateway:PUT
+                Resource:
+                  - "arn:aws:apigateway:us-east-1::/tags/*"
+              - Effect: Allow
+                Action:
+                  - apigateway:PATCH
+                  - apigateway:POST
+                  - apigateway:GET
+                  - apigateway:DELETE
+                  - apigateway:PUT
+                Resource:
+                  - "arn:aws:apigateway:us-east-1::/restapis/*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group::log-stream:*
+              - Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:DeleteFunction
+                  - lambda:AddPermission
+                  - lambda:UpdateFunctionCode
+                  - lambda:ListTags
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:ListVersionsByFunction
+                  - lambda:PublishVersion
+                  - lambda:CreateAlias
+                  - lambda:DeleteAlias
+                  - lambda:RemovePermission
+                  - lambda:GetAlias
+                  - lambda:UpdateAlias
+                  - lambda:UpdateFunctionConfiguration
+                Resource: !Sub "arn:aws:lambda:us-east-1:${AWS::AccountId}:function:${CFNStackName}-*"
+              - Effect: Allow
+                Action:
+                  - codebuild:*
+                Resource: !GetAtt CodeBuild.Arn
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:AttachRolePolicy
+                  - iam:PassRole
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:getRolePolicy
+                  - iam:UpdateAssumeRolePolicy
+                Resource:
+                  - !Sub "arn:aws:iam::*:role/${CFNStackName}*"
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub  ${ArtifactBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - s3:DeleteBucket
+                Resource: !GetAtt ArtifactBucket.Arn
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                Resource: !Sub "arn:aws:cloudwatch:*:${AWS::AccountId}:alarm:${CFNStackName}-*"
+              - Effect: Allow
+                Action:
+                  - codedeploy:CreateDeploymentGroup
+                  - codedeploy:DeleteDeploymentGroup
+                  - codedeploy:CreateDeployment
+                  - codedeploy:GetDeploymentConfig
+                  - codedeploy:GetDeployment
+                  - codedeploy:GetDeploymentGroup
+                  - codedeploy:UpdateDeploymentGroup
+                Resource: !Sub "arn:aws:codedeploy:*:${AWS::AccountId}:deploymentgroup:${CFNStackName}-*"
+              - Effect: Allow
+                Action:
+                  - codedeploy:GetDeploymentConfig
+                Resource: !Sub "arn:aws:codedeploy:*:${AWS::AccountId}:deploymentconfig:*"
+              - Effect: Allow
+                Action:
+                  - codedeploy:CreateApplication
+                  - codedeploy:DeleteApplication
+                  - codedeploy:RegisterApplicationRevision
+                Resource: !Sub "arn:aws:codedeploy:*:${AWS::AccountId}:application:${CFNStackName}-*"
+              - Effect: Allow
+                Action:
+                  - iam:CreateServiceLinkedRole
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ops.apigateway.amazonaws.com/AWSServiceRoleForAPIGateway"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: 
+                  - "arn:aws:secretsmanager:us-east-1:515177040146:secret:githubsvcaccesstkn-ioewJC"
+              - Effect: Allow
+                Action: 
+                  - kms:Decrypt
+                  - kms:DescribeKey
+                Resource: "arn:aws:kms:us-east-1:515177040146:key/24fa1a06-0c1d-440a-acfb-9ffcfefc2098"
+              - Effect: Allow
+                Action:
+                  - iam:ListRoleTags
+                  - iam:TagRole
+                  - iam:UntagRole
+                Resource:
+                  - arn:aws:iam::*:role/*
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - ExpirationInDays: 30
+            Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  CodeBuild:
+    Type: "AWS::CodeBuild::Project"
+    Properties:
+      Source:
+        Type: "CODEPIPELINE"
+      Artifacts:
+        OverrideArtifactName: false
+        Type: "CODEPIPELINE"
+      Environment:
+        ComputeType: "BUILD_GENERAL1_SMALL"
+        Image: "aws/codebuild/amazonlinux2-x86_64-standard:3.0"
+        PrivilegedMode: true
+        Type: "LINUX_CONTAINER"
+        EnvironmentVariables:
+          - Name: PACKAGE_BUCKET
+            Value: !Ref ArtifactBucket
+      ServiceRole: !Ref CodeBuildServiceRole
+      TimeoutInMinutes: 60
+      QueuedTimeoutInMinutes: 480
+      LogsConfig:
+        CloudWatchLogs:
+          Status: "ENABLED"
+        S3Logs:
+          Status: "DISABLED"
+
+  CodePipeline:
+    Type: "AWS::CodePipeline::Pipeline"
+    Properties:
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Location: !Ref ArtifactBucket
+        Type: "S3"
+      Stages: 
+      -
+        Actions: 
+        -
+          InputArtifacts: []
+          ActionTypeId:
+            Version: '1'
+            Owner: ThirdParty
+            Category: Source
+            Provider: GitHub
+          OutputArtifacts:
+            - Name: SourceArtifact
+          RunOrder: 1
+          Configuration:
+            Owner: !Ref GitHubOwner
+            Repo: !Ref GitHubRepo
+            Branch: !Ref GitHubBranch
+            PollForSourceChanges: false
+            OAuthToken: '{{resolve:secretsmanager:arn:aws:secretsmanager:us-east-1:515177040146:secret:githubsvcaccesstkn-ioewJC:SecretString:github-svcaccount-token}}'
+          Name: ApplicationSource
+        Name: "Source"
+      -
+        Actions:
+        -
+          ActionTypeId:
+            Category: "Build"
+            Owner: "AWS"
+            Provider: "CodeBuild"
+            Version: "1"
+          Configuration:
+            ProjectName: !Ref CodeBuild
+          InputArtifacts:
+            - Name: 'SourceArtifact'
+          Name: "Build"
+          OutputArtifacts:
+            - Name: 'BuildArtifact'
+          Region: !Sub ${AWS::Region}
+          RunOrder: 1
+        Name: "Build"
+      -
+        Actions:
+        -
+          ActionTypeId:
+            Category: "Deploy"
+            Owner: "AWS"
+            Provider: "CloudFormation"
+            Version: "1"
+          Configuration:
+            ActionMode: "CREATE_UPDATE"
+            Capabilities: "CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM,CAPABILITY_IAM"
+            RoleArn: !GetAtt CodePipelineServiceRole.Arn
+            StackName: !Ref CFNStackName
+            TemplatePath: !Sub "BuildArtifact::${ArtifactName}"
+            TemplateConfiguration: BuildArtifact::CFTemplateConfig.json
+            ParameterOverrides: !Sub '{"Env": "${Env}"}'
+          Name: "CloudFormation-step"
+          Region: !Sub ${AWS::Region}
+          InputArtifacts:
+            - Name: BuildArtifact
+          RunOrder: 1
+        Name: "Deploy"
+
+  CodePipelineFailureNotification:
+    Type: 'AWS::CodeStarNotifications::NotificationRule'
+    Properties:
+      Name: !Sub "Notification for failed ${CFNStackName} pipeline run"
+      DetailType: FULL
+      Resource: !Sub "arn:aws:codepipeline:us-east-1:${AWS::AccountId}:${CodePipeline}"
+      EventTypeIds: 
+          - codepipeline-pipeline-pipeline-execution-failed
+      Targets: 
+          - TargetType: SNS 
+            TargetAddress: !ImportValue CodepipelineSNSTopicArn
+                  
+  GithubWebhook:
+    Type: 'AWS::CodePipeline::Webhook'
+    Properties:
+      Authentication: GITHUB_HMAC
+      AuthenticationConfiguration:
+        SecretToken: '{{resolve:secretsmanager:arn:aws:secretsmanager:us-east-1:515177040146:secret:githubsvcaccesstkn-ioewJC:SecretString:github-svcaccount-token}}'
+      RegisterWithThirdParty: true
+      Filters:
+      - JsonPath: "$.ref"
+        MatchEquals: refs/heads/{Branch}
+      TargetPipeline: !Ref CodePipeline
+      TargetAction: ApplicationSource
+      TargetPipelineVersion: !GetAtt CodePipeline.Version

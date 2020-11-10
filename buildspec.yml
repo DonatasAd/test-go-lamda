@@ -1,0 +1,30 @@
+version: 0.2
+
+env:
+  variables:
+    GO111MODULE: "on"
+  secrets-manager:
+    GH_TOKEN: arn:aws:secretsmanager:us-east-1:515177040146:secret:githubsvcaccesstkn-ioewJC:github-svcaccount-token
+
+phases:
+  install:
+    runtime-versions:
+      golang: 1.14
+    commands:
+      - pip3 install cfn-lint
+      - pip3 install taskcat
+  pre_build:
+    commands:
+      - cfn-lint template.yaml -i E2532 E3002
+  build:
+    commands:
+      - git config --global url."https://${GH_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+      - go env -w GOPRIVATE="github.com/maxexllc/*"
+      - go get ./...
+      - go build -o main
+      - aws cloudformation package --template-file template.yaml --s3-bucket ${PACKAGE_BUCKET} --output-template-file packaged-template.yaml
+      - taskcat test run -l
+artifacts:
+  files:
+    - packaged-template.yaml
+    - CFTemplateConfig.json

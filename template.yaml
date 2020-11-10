@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: Example Go Lambda
+Parameters:
+  LogGroupName:
+    Description: 'Specified CloudWatchLogs logging group'
+    Type: 'String'
+    Default: ""
+  Env:
+    Description: 'The env level to which this stack is being deployed (i.e. Dev/QA/Prod)'
+    Type: 'String'
+    Default: Dev
+    AllowedValues: 
+      - Dev
+      - QA
+      - Prod
+Conditions: 
+  HasLogGroupName: !Not [!Equals ["", !Ref LogGroupName]]
+Mappings:
+  EnvMap:
+    Dev:
+      APIThrottleRate: 10
+      APIThrottleBurst: 5
+      DeploymentType: AllAtOnce
+    QA:
+      APIThrottleRate: 100
+      APIThrottleBurst: 50
+      DeploymentType: Linear10PercentEvery3Minutes
+    Prod:      
+      APIThrottleRate: 10000
+      APIThrottleBurst: 5000
+      DeploymentType: Linear10PercentEvery10Minutes
+
+Resources:
+  ApiGatewayApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      TracingEnabled: true
+      EndpointConfiguration: REGIONAL
+      MethodSettings:
+        - ThrottlingBurstLimit: !FindInMap [EnvMap, !Ref Env, APIThrottleBurst]
+          ThrottlingRateLimit: !FindInMap [EnvMap, !Ref Env, APIThrottleRate]
+          ResourcePath: '/*'
+          HttpMethod: '*'
+  TestLambdaFunction:
+    Type: AWS::Serverless::Function
+    DependsOn:
+      - MaxexLogGroup
+    Properties:
+      Description: Basic Go Lambda Function for template repo
+      Handler: main
+      Runtime: go1.x
+      Policies: 
+        - AWSLambdaBasicExecutionRole
+        - Version: '2012-10-17' 
+          Statement:
+            - Effect: Allow
+              Action:
+                - logs:DescribeLogStreams
+              Resource: '*'
+            - Effect: Deny # this prevents duplicate log groups from being created automatically by lambda
+              Action: # if you come up with a better option let us know!
+                - logs:*
+              Resource: !Sub "arn:aws:logs:us-east-1:${AWS::AccountId}:log-group:/aws/lambda/*"
+      AutoPublishAlias: live
+      Tracing: Active # https://docs.aws.amazon.com/lambda/latest/dg/lambda-x-ray.html
+      Events:
+        GetEvent:
+          Type: Api
+          Properties:
+            Path: /
+            Method: post
+            RestApiId:
+              Ref: ApiGatewayApi
+      DeploymentPreference:
+        Type: !FindInMap [EnvMap, !Ref Env, DeploymentType] 
+        Alarms:
+          - Ref: LambdaErrorAlarm
+      Environment:
+         Variables:
+           LOG_GROUP_NAME: !If [HasLogGroupName, !Ref LogGroupName, !Ref "AWS::StackName"]
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ActionsEnabled: false
+      AlarmDescription: !Sub 'Lambda Error Alarm for ${TestLambdaFunction}'
+      ComparisonOperator: GreaterThanThreshold
+      EvaluationPeriods: 1
+      Threshold: 1
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub '${TestLambdaFunction}'
+      Period: 300
+      Statistic: Sum
+  MaxexLogGroup: 
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub 
+        - '/maxex/aws/lambda/${LGN}'
+        - LGN: !If [HasLogGroupName, !Ref LogGroupName, !Ref "AWS::StackName"]

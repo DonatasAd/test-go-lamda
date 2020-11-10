@@ -1,0 +1,10 @@
+{
+  "Tags" : {
+    "Team" : "MaxNext",
+    "Domain" : "Templat",
+    "Service" : "Template",
+    "OnCallSchedule" : "CONFLUENCE LINK GOES HERE",
+    "Runbook" : "CONFLUENCE LINK GOES HERE",
+    "ApplicationDocs" : "CONFLUENCE LINK GOES HERE"
+  }
+}
